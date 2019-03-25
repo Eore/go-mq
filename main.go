@@ -2,26 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"strings"
 )
-
-func listCommand(connection net.Conn, data []string) {
-	if len(data) > 1 {
-		switch data[0] {
-		case "send":
-			fmt.Printf("%s sending to %s\n", connection.LocalAddr(), data[1])
-
-		case "connect":
-			fmt.Println("connecting ")
-		case "exit":
-			fmt.Println(data)
-			connection.Close()
-		default:
-			fmt.Println("default :")
-		}
-	}
-}
 
 func readData(connection net.Conn) []string {
 	data := make([]byte, (1024 * 4))
@@ -34,58 +18,56 @@ func readData(connection net.Conn) []string {
 	return ret
 }
 
-type Pool struct {
-	Clients []Client
-}
-
-type Client struct {
-	IP         string
-	Connection net.Conn
-}
-
-func (p *Pool) SendMessage(ip string, message string) {
-	for _, val := range p.Clients {
-		if val.IP == ip {
-			val.Connection.Write([]byte(message))
-		}
-	}
-}
-
-func (p *Pool) AddClient(client Client) {
-	p.Clients = append(p.Clients, client)
-}
-
 func main() {
 	var pool Pool
 	ln, _ := net.Listen("tcp", ":8888")
-	fmt.Println("Server started...")
+	log.Println("Server started...")
 
 	for {
 		conn, _ := ln.Accept()
 
-		pool.AddClient(Client{
-			IP:         conn.RemoteAddr().String(),
-			Connection: conn,
-		})
-		// clients = append(clients, client{
-		// 	IP:         conn.RemoteAddr().String(),
-		// 	Connection: &conn,
-		// })
-
-		fmt.Printf("%+v\n", pool)
-
-		fmt.Printf("Incoming connection from %s\n", conn.RemoteAddr())
+		log.Printf("%s connected\n", conn.RemoteAddr())
 		conn.Write([]byte("------------------------\n"))
 		conn.Write([]byte(" Welcome to SeQL System\n"))
 		conn.Write([]byte("------------------------\n"))
 		conn.Write([]byte("Command :\n"))
-		conn.Write([]byte("SEND <to> <message>\n"))
+		conn.Write([]byte("JOIN <domain>         join to target domain\n"))
+		conn.Write([]byte("SEND <to> <message>   sending message to target domain\n"))
+		conn.Write([]byte("EXIT                  exit from network\n"))
 		go func() {
 			defer conn.Close()
 			for {
 				data := readData(conn)
-				// fmt.Println(len(data))
-				listCommand(conn, data)
+				if data != nil && data[0] != "" {
+					switch strings.ToLower(data[0]) {
+					case "list":
+						conn.Write([]byte(pool.ToString()))
+					case "join":
+						err := pool.AddClient(Client{
+							UID:        genUID(32),
+							Domain:     data[1],
+							IP:         conn.RemoteAddr().String(),
+							Connection: conn,
+						})
+						if err != nil {
+							log.Println(err)
+							conn.Write([]byte(data[1] + " already Joined\n"))
+						} else {
+							conn.Write([]byte(data[1] + " joined\n"))
+						}
+					case "send":
+						err := pool.SendMessage(data[1], data[2])
+						if err != nil {
+							conn.Write([]byte(data[1] + " not found\n"))
+						}
+					case "exit":
+						log.Printf("%s disconnected\n", conn.RemoteAddr())
+						pool.DeleteClient(conn.RemoteAddr().String())
+						conn.Close()
+					default:
+						fmt.Println("miaw")
+					}
+				}
 			}
 		}()
 	}
